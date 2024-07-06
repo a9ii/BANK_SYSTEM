@@ -26,8 +26,8 @@ This is a Telegram bot simulating a banking system. The bot provides functionali
 1. **Clone  the Repository**
 
    ```bash
-   git clone https://github.com/a9ii/BANK_SYSTEM.git
-   cd BANK_SYSTEM
+   https://github.com/a9ii/Bank_System.git
+   cd Bank_System
 
    ```
 
