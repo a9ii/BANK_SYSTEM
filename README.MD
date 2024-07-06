@@ -30,5 +30,4 @@ This is a Telegram bot simulating a banking system. The bot provides functionali
 
    ```bash
    git clone https://github.com/yourusername/banking-telegram-bot.git
-   cd banking-telegram-bot
-```
+   cd banking-telegram-bot```
