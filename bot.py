@@ -87,16 +87,9 @@ def calculate_hourly_change():
     current_liquidity = get_bot_liquidity()
     past_liquidity = bot_stats_collection.find_one(
         {'_id': 'liquidity'},
-        sort=[('history.timestamp', -1)]
+        
     )
-    
-    if past_liquidity and past_liquidity['history']:
-        past_amount = next((h['amount'] for h in reversed(past_liquidity['history']) if h['timestamp'] <= one_hour_ago), None)
-        if past_amount is not None:
-            change = ((current_liquidity - past_amount) / past_amount) * 100
-            return change
-    
-    return 0  # If no past data or error, return 0% change
+  # If no past data or error, return 0% change
 
 # Keyboard markup
 def get_main_keyboard():
