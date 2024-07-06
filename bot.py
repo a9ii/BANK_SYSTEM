@@ -9,12 +9,12 @@ import pytz
 
 
 # Bot token
-TOKEN = os.getenv("token")
+TOKEN = os.getenv("TOKEN")
 
 # MongoDB connection
-MONGODB_USER = os.getenv("user")
-MONGODB_PASSWORD = os.getenv("pass")
-MONGODB_CLUSTER = os.getenv("url")
+MONGODB_USER = os.getenv("MONGODB_USER")
+MONGODB_PASSWORD = os.getenv("MONGODB_PASSWORD")
+MONGODB_CLUSTER = os.getenv("MONGODB_CLUSTER")
 
 client = MongoClient(f"mongodb+srv://{MONGODB_USER}:{MONGODB_PASSWORD}@{MONGODB_CLUSTER}/")
 db = client['bank_bot']
