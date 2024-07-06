@@ -36,5 +36,5 @@ Install Dependencies
 
 Use pip to install the required libraries.
 
-pip install -r requirements.txt
+```pip install -r requirements.txt
 
