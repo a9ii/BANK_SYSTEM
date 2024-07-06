@@ -12,9 +12,9 @@ import pytz
 TOKEN = os.getenv("TOKEN")
 
 # MongoDB connection
-MONGODB_USER = 'dataBase'
-MONGODB_PASSWORD = os.getenv("MONGODB_WORD")
-MONGODB_CLUSTER = 'cluster0.if1idei.mongodb.net'
+MONGODB_USER = os.getenv("DB_USER")
+MONGODB_PASSWORD = os.getenv("DB_PASS")
+MONGODB_CLUSTER = os.getenv("DB_CLUSTER")
 
 client = MongoClient(f"mongodb+srv://{MONGODB_USER}:{MONGODB_PASSWORD}@{MONGODB_CLUSTER}/")
 db = client['bank_bot']
