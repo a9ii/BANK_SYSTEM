@@ -13,7 +13,7 @@ TOKEN = os.getenv("TOKEN")
 
 # MongoDB connection
 MONGODB_USER = 'dataBase'
-MONGODB_PASSWORD = os.getenv("MONGODB_PASSWORD")
+MONGODB_PASSWORD 'D9bzaZUaqEDSmBZn'
 MONGODB_CLUSTER = 'cluster0.if1idei.mongodb.net'
 
 client = MongoClient(f"mongodb+srv://{MONGODB_USER}:{MONGODB_PASSWORD}@{MONGODB_CLUSTER}/")
