@@ -32,9 +32,23 @@ This is a Telegram bot simulating a banking system. The bot provides functionali
    git clone https://github.com/yourusername/banking-telegram-bot.git
    cd banking-telegram-bot
 
-Install Dependencies
+2.Install Dependencies
 
 Use pip to install the required libraries.
 
   ```pip install -r requirements.txt
+
+3.Set Environment Variables
+
+You need to set the following environment variables:
+
+TOKEN: Your Telegram bot token.
+DB_USER: Your MongoDB username.
+DB_PASS: Your MongoDB password.
+DB_CLUSTER: Your MongoDB cluster URL.
+You can set these in your terminal session or use a .env file. Here's an example of a .env file:
+ ```TOKEN=your-telegram-bot-token
+DB_USER=your-db-username
+DB_PASS=your-db-password
+DB_CLUSTER=your-db-cluster-url
 
