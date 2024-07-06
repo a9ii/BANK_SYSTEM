@@ -38,7 +38,7 @@ Use pip to install the required libraries.
 
   ```bash
      pip install -r requirements.txt
-
+```
 3.Set Environment Variables
 
 You need to set the following environment variables:
