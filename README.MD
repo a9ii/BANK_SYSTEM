@@ -49,7 +49,7 @@ DB_PASS: Your MongoDB password.
 DB_CLUSTER: Your MongoDB cluster URL.
 You can set these in your terminal session or use a .env file. Here's an example of a .env file:
 
- ```bash
+ ```json
 TOKEN=your-telegram-bot-token
 DB_USER=your-db-username
 DB_PASS=your-db-password
