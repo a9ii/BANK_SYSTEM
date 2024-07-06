@@ -54,4 +54,11 @@ TOKEN=your-telegram-bot-token
 DB_USER=your-db-username
 DB_PASS=your-db-password
 DB_CLUSTER=your-db-cluster-url
+```
+Run the Bot
 
+Start the bot by executing:
+
+```bash
+Copy code
+python bot.py
