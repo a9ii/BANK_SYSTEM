@@ -145,7 +145,7 @@ def bot_liquidity(message):
     response = (
         f"🏦 سيولة البوت الحالية: ${liquidity:.2f}\n"
         f"💰 إجمالي أرصدة المستخدمين: ${total_user_balance:.2f}\n"
-        f"📊 نسبة التغير في الساعة الأخيرة: {hourly_change:.2f}%"
+        
     )
     
     bot.send_message(user_id, response)
