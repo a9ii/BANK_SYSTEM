@@ -1,6 +1,6 @@
 Here's a `README.md` file for your Telegram bot project, detailing the setup and usage instructions:
 
-```markdown
+
 # Banking Telegram Bot
 
 This is a Telegram bot simulating a banking system. The bot provides functionalities such as balance checking, transaction history, fund transfers, and daily gifts. It uses Python with the `telebot` library and MongoDB for data storage.
@@ -22,8 +22,8 @@ This is a Telegram bot simulating a banking system. The bot provides functionali
 - Telegram Bot Token
 
 ### Installation
-```
-1. **Clone the Repository**
+
+1. **Clone  the Repository**
 
    ```bash
    git clone https://github.com/yourusername/banking-telegram-bot.git
