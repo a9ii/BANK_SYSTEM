@@ -4,11 +4,31 @@ Template for quick deployment using [python-telegram-bot](https://github.com/pyt
 
 [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/-6JUpc?referralCode=NC4Tt6)
 
-## Examples
-The examples from the library are included in the `examples` folder. You can run them directly from the root of the repository:
+# Banking Telegram Bot
 
-- `bot.py` is the main file to run the bot.
-- Separating the main logic would be a good idea.
+This is a Telegram bot simulating a banking system. The bot provides functionalities such as balance checking, transaction history, fund transfers, and daily gifts. It uses Python with the `telebot` library and MongoDB for data storage.
 
+## Features
 
+- 💰 **Check Balance**: View your current account balance.
+- 📜 **Transaction History**: See a list of your previous transactions.
+- 🏦 **Bot Liquidity**: Check the current liquidity of the bot and the total balance of all users.
+- 💸 **Transfer Funds**: Send money to other users with a small transaction fee.
+- 🎁 **Daily Gift**: Receive a random daily gift to your account.
 
+## Setup
+
+### Prerequisites
+
+- Python 3.7+
+- MongoDB instance (local or cloud)
+- Telegram Bot Token
+
+### Installation
+
+1. **Clone the Repository**
+
+   ```bash
+   git clone https://github.com/yourusername/banking-telegram-bot.git
+   cd banking-telegram-bot
+```
