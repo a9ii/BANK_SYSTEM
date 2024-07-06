@@ -86,7 +86,7 @@ def calculate_hourly_change():
     
     current_liquidity = get_bot_liquidity()
     past_liquidity = bot_stats_collection.find_one(
-        {'_id': 'liquidity', 'history.timestamp': {'$lte': one_hour_ago}},
+        {'_id': 'liquidity', 'history.timestamp': },
         sort=[('history.timestamp', -1)]
     )
     
