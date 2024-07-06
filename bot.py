@@ -1,5 +1,4 @@
 import os
-from keep_alive import keep_alive
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 import random
