@@ -3,11 +3,10 @@ from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 import random
 import time
 from pymongo import MongoClient
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
-import uuid
+import string
 import os
-
 # Bot token
 TOKEN = os.getenv("TOKEN")
 
@@ -43,11 +42,17 @@ def update_user_balance(user_id, new_balance):
         upsert=True
     )
 
-def generate_transaction_id():
-    return str(uuid.uuid4())
+def generate_transaction_id(user_id, is_transfer=False):
+    year = datetime.now(baghdad_tz).strftime("%y")
+    random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    if is_transfer:
+        return f"IQ{year}-{user_id}-{random_part}"
+    else:
+        return f"IQ{year}-{random_part}"
 
-def log_transaction(user_id, transaction_type, amount, details=None):
-    transaction_id = generate_transaction_id()
+def log_transaction(user_id, transaction_type, amount, details=None, transaction_id=None):
+    if not transaction_id:
+        transaction_id = generate_transaction_id(user_id)
     transaction = {
         'transaction_id': transaction_id,
         'user_id': user_id,
@@ -87,24 +92,6 @@ def get_total_user_balance():
     total = sum(user['balance'] for user in users_collection.find())
     return total
 
-def calculate_hourly_change():
-    now = get_current_time()
-    one_hour_ago = now - timedelta(hours=1)
-    
-    current_liquidity = get_bot_liquidity()
-    past_liquidity = bot_stats_collection.find_one(
-        {'_id': 'liquidity', 'history.timestamp': {'$lte': one_hour_ago}},
-        sort=[('history.timestamp', -1)]
-    )
-    
-    if past_liquidity and past_liquidity['history']:
-        past_amount = next((h['amount'] for h in reversed(past_liquidity['history']) if h['timestamp'] <= one_hour_ago), None)
-        if past_amount is not None:
-            change = ((current_liquidity - past_amount) / past_amount) * 100
-            return change
-    
-    return 0  # If no past data or error, return 0% change
-
 # Keyboard markup
 def get_main_keyboard():
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -113,11 +100,18 @@ def get_main_keyboard():
     keyboard.row(KeyboardButton('🎁 الهدية اليومية'))
     return keyboard
 
+# Error handling wrapper
+def send_message_safely(chat_id, text, **kwargs):
+    try:
+        return bot.send_message(chat_id, text, **kwargs)
+    except telebot.apihelper.ApiException as e:
+        print(f"Error sending message to {chat_id}: {e}")
+
 # Start command
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
-    bot.send_message(user_id, "👋 مرحبًا بك في البوت البنكي! يمكنك استخدام الأزرار أدناه للتحكم.", reply_markup=get_main_keyboard())
+    send_message_safely(user_id, "👋 مرحبًا بك في البوت البنكي! يمكنك استخدام الأزرار أدناه للتحكم.", reply_markup=get_main_keyboard())
 
 # Balance command
 @bot.message_handler(func=lambda message: message.text == '💰 رصيدي')
@@ -125,7 +119,7 @@ def check_balance(message):
     user_id = message.from_user.id
     balance = get_user_balance(user_id)
     response = f"💰 رصيدك الحالي: ${balance:.2f}\n\n🆔 رقم حسابك (معرف المستخدم): `{user_id}`"
-    bot.send_message(user_id, response, parse_mode='Markdown')
+    send_message_safely(user_id, response, parse_mode='Markdown')
 
 # Transaction history command
 @bot.message_handler(func=lambda message: message.text == '📜 العمليات السابقة')
@@ -133,7 +127,7 @@ def transaction_history(message):
     user_id = message.from_user.id
     transactions = get_transaction_history(user_id)
     if not transactions:
-        bot.send_message(user_id, "📭 لا توجد عمليات سابقة.")
+        send_message_safely(user_id, "📭 لا توجد عمليات سابقة.")
         return
     
     history = "📜 سجل العمليات:\n\n"
@@ -147,7 +141,7 @@ def transaction_history(message):
         elif transaction['type'] == 'daily_gift':
             history += f"🎁 {date}: هدية يومية ${transaction['amount']:.2f}\n   🆔 رقم العملية: `{transaction_id}`\n\n"
     
-    bot.send_message(user_id, history, parse_mode='Markdown')
+    send_message_safely(user_id, history, parse_mode='Markdown')
 
 # Bot liquidity command
 @bot.message_handler(func=lambda message: message.text == '🏦 سيولة البوت')
@@ -155,34 +149,32 @@ def bot_liquidity(message):
     user_id = message.from_user.id
     liquidity = get_bot_liquidity()
     total_user_balance = get_total_user_balance()
-    hourly_change = calculate_hourly_change()
     
     response = (
         f"🏦 سيولة البوت الحالية: ${liquidity:.2f}\n"
         f"💰 إجمالي أرصدة المستخدمين: ${total_user_balance:.2f}\n"
-        f"📊 نسبة التغير في الساعة الأخيرة: {hourly_change:.2f}%"
     )
     
-    bot.send_message(user_id, response)
+    send_message_safely(user_id, response)
 
 # Transfer command
 @bot.message_handler(func=lambda message: message.text == '💸 تحويل')
 def transfer_start(message):
     user_id = message.from_user.id
-    bot.send_message(user_id, "🔢 أدخل رقم حساب المستلم (معرف المستخدم):")
+    send_message_safely(user_id, "🔢 أدخل رقم حساب المستلم (معرف المستخدم):")
     bot.register_next_step_handler(message, transfer_amount)
 
 def transfer_amount(message):
     user_id = message.from_user.id
     recipient_id = message.text
     if not recipient_id.isdigit():
-        bot.send_message(user_id, "❌ رقم الحساب غير صحيح. يرجى إدخال رقم صحيح.")
+        send_message_safely(user_id, "❌ رقم الحساب غير صحيح. يرجى إدخال رقم صحيح.")
         return
     recipient_id = int(recipient_id)
     if recipient_id == user_id:
-        bot.send_message(user_id, "❌ لا يمكنك التحويل لنفسك. يرجى إدخال رقم حساب آخر.")
+        send_message_safely(user_id, "❌ لا يمكنك التحويل لنفسك. يرجى إدخال رقم حساب آخر.")
         return
-    bot.send_message(user_id, "💲 أدخل المبلغ المراد تحويله:")
+    send_message_safely(user_id, "💲 أدخل المبلغ المراد تحويله:")
     bot.register_next_step_handler(message, transfer_confirm, recipient_id)
 
 def transfer_confirm(message, recipient_id):
@@ -190,7 +182,7 @@ def transfer_confirm(message, recipient_id):
     try:
         amount = float(message.text)
     except ValueError:
-        bot.send_message(user_id, "❌ مبلغ غير صحيح. يرجى إدخال رقم.")
+        send_message_safely(user_id, "❌ مبلغ غير صحيح. يرجى إدخال رقم.")
         return
     
     fee = amount * 0.02
@@ -198,17 +190,17 @@ def transfer_confirm(message, recipient_id):
     user_balance = get_user_balance(user_id)
     
     if total_amount > user_balance:
-        bot.send_message(user_id, "❌ رصيدك غير كافٍ لإتمام هذه العملية.")
+        send_message_safely(user_id, "❌ رصيدك غير كافٍ لإتمام هذه العملية.")
         return
     
-    transfer_id = generate_transaction_id()
+    transfer_id = generate_transaction_id(user_id, is_transfer=True)
     confirm_message = f"📝 تأكيد التحويل:\nالمبلغ: ${amount:.2f}\nالرسوم: ${fee:.2f}\nالإجمالي: ${total_amount:.2f}\nالمستلم: {recipient_id}\n\n🆔 رقم العملية: `{transfer_id}`"
     
     keyboard = InlineKeyboardMarkup()
     keyboard.row(InlineKeyboardButton("✅ تأكيد", callback_data=f"confirm_transfer:{transfer_id}"),
                  InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel_transfer:{transfer_id}"))
     
-    bot.send_message(user_id, confirm_message, reply_markup=keyboard, parse_mode='Markdown')
+    send_message_safely(user_id, confirm_message, reply_markup=keyboard, parse_mode='Markdown')
     
     # Store transfer request
     transfer_requests_collection.insert_one({
@@ -244,36 +236,28 @@ def perform_transfer(transfer_request):
     amount = transfer_request['amount']
     fee = transfer_request['fee']
     total_amount = amount + fee
+    transfer_id = transfer_request['transfer_id']
 
     sender_balance = get_user_balance(sender_id)
     recipient_balance = get_user_balance(recipient_id)
 
     if total_amount > sender_balance:
-        bot.send_message(sender_id, "❌ رصيدك غير كافٍ لإتمام هذه العملية.")
+        send_message_safely(sender_id, "❌ رصيدك غير كافٍ لإتمام هذه العملية.")
         return
 
     update_user_balance(sender_id, sender_balance - total_amount)
     update_user_balance(recipient_id, recipient_balance + amount)
     update_bot_liquidity(fee)
 
-    transfer_id = transfer_request['transfer_id']
-    sender_transaction_id = log_transaction(sender_id, 'transfer_out', -total_amount, {'recipient_id': recipient_id, 'transfer_id': transfer_id})
-    recipient_transaction_id = log_transaction(recipient_id, 'transfer_in', amount, {'sender_id': sender_id, 'transfer_id': transfer_id})
+    log_transaction(sender_id, 'transfer_out', -total_amount, {'recipient_id': recipient_id, 'transfer_id': transfer_id}, transfer_id)
+    log_transaction(recipient_id, 'transfer_in', amount, {'sender_id': sender_id, 'transfer_id': transfer_id}, transfer_id)
 
-    try:
-        bot.send_message(sender_id, f"✅ تم التحويل بنجاح. المبلغ: ${amount:.2f}, الرسوم: ${fee:.2f}\n🆔 رقم العملية: `{sender_transaction_id}`", parse_mode='Markdown')
-    except telebot.apihelper.ApiException as e:
-        print(f"Error sending message to sender: {e}")
-
-    try:
-        bot.send_message(recipient_id, f"💰 لقد استلمت تحويلاً بقيمة ${amount:.2f}\n🆔 رقم العملية: `{recipient_transaction_id}`", parse_mode='Markdown')
-    except telebot.apihelper.ApiException as e:
-        print(f"Error sending message to recipient: {e}")
+    send_message_safely(sender_id, f"✅ تم التحويل بنجاح. المبلغ: ${amount:.2f}, الرسوم: ${fee:.2f}\n🆔 رقم العملية: `{transfer_id}`", parse_mode='Markdown')
+    send_message_safely(recipient_id, f"💰 لقد استلمت تحويلاً بقيمة ${amount:.2f}\n🆔 رقم العملية: `{transfer_id}`", parse_mode='Markdown')
 
     transfer_requests_collection.delete_one({'transfer_id': transfer_id})
 
-
-            # Daily gift command
+# Daily gift command
 @bot.message_handler(func=lambda message: message.text == '🎁 الهدية اليومية')
 def daily_gift(message):
     user_id = message.from_user.id
@@ -283,7 +267,7 @@ def daily_gift(message):
     if user and 'last_gift' in user:
         last_gift = user['last_gift'].replace(tzinfo=baghdad_tz)
         if (current_time - last_gift).days < 1:
-            bot.send_message(user_id, "⏳ لقد حصلت بالفعل على هديتك اليومية. يرجى المحاولة غدًا.")
+            send_message_safely(user_id, "⏳ لقد حصلت بالفعل على هديتك اليومية. يرجى المحاولة غدًا.")
             return
     
     gift_amount = random.uniform(0.005, 0.01)
@@ -299,27 +283,29 @@ def daily_gift(message):
     
     transaction_id = log_transaction(user_id, 'daily_gift', gift_amount)
     
-    response = (
+ 
+        
+        response = (
         f"🎉 مبروك! لقد حصلت على هدية يومية بقيمة ${gift_amount:.3f}\n"
         f"💰 رصيدك الجديد: ${new_balance:.2f}\n"
         f"🆔 رقم العملية: `{transaction_id}`"
     )
-    bot.send_message(user_id, response, parse_mode='Markdown')
+    send_message_safely(user_id, response, parse_mode='Markdown')
 
-# Error handling wrapper
-def send_message_safely(chat_id, text, **kwargs):
+# Error handling
+@bot.middleware_handler(update_types=['message'])
+def handle_message(bot_instance, message):
     try:
-        return bot.send_message(chat_id, text, **kwargs)
-    except telebot.apihelper.ApiException as e:
-        print(f"Error sending message to {chat_id}: {e}")
-        # You might want to log this error or handle it in some way
+        bot_instance.process_new_messages([message])
+    except Exception as e:
+        user_id = message.from_user.id
+        error_message = f"حدث خطأ أثناء معالجة طلبك. الرجاء المحاولة مرة أخرى لاحقًا."
+        send_message_safely(user_id, error_message)
+        print(f"Error processing message: {e}")
 
-# Use this wrapper for all bot.send_message calls
-# For example:
-# send_message_safely(user_id, "Your message here")
-
-# Polling
+# Main function to run the bot
 def main():
+    print("Starting the bot...")
     while True:
         try:
             bot.polling(none_stop=True, interval=0, timeout=20)
