@@ -7,6 +7,10 @@ from datetime import datetime
 import pytz
 import string
 import os
+
+
+from telebot import apihelper apihelper.ENABLE_MIDDLEWARE = True
+
 # Bot token
 TOKEN = os.getenv("TOKEN")
 
