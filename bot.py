@@ -3,11 +3,12 @@ from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 import random
 import time
 from pymongo import MongoClient
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 import string
 import requests
 import os
+
 # Bot token
 TOKEN = os.getenv("TOKEN")
 
@@ -28,9 +29,19 @@ bot = telebot.TeleBot(TOKEN)
 # Baghdad timezone
 baghdad_tz = pytz.timezone('Asia/Baghdad')
 
+# Bot start time
+BOT_START_TIME = datetime.now(baghdad_tz)
+
 # Helper functions
 def get_current_time():
     return datetime.now(baghdad_tz)
+
+def get_uptime():
+    uptime = get_current_time() - BOT_START_TIME
+    days, remainder = divmod(uptime.total_seconds(), 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, _ = divmod(remainder, 60)
+    return f"{int(days)} يوم, {int(hours)} ساعة, {int(minutes)} دقيقة"
 
 def get_user_balance(user_id):
     user = users_collection.find_one({'user_id': user_id})
@@ -104,7 +115,7 @@ def get_main_keyboard():
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row(KeyboardButton('💰 رصيدي'), KeyboardButton('📜 العمليات السابقة'))
     keyboard.row(KeyboardButton('🏦 سيولة البوت'), KeyboardButton('💸 تحويل'))
-    keyboard.row(KeyboardButton('🎁 الهدية اليومية'), KeyboardButton('📊 الحالة'))
+    keyboard.row(KeyboardButton('🎁 الهدية اليومية'))
     return keyboard
 
 # Start command
@@ -129,8 +140,6 @@ def handle_all_messages(message):
         transfer_start(user_id)
     elif text == '🎁 الهدية اليومية':
         daily_gift(user_id)
-    elif text == '📊 الحالة':
-        check_status(user_id)
     else:
         send_message_safely(user_id, "عذرًا، لم أفهم هذا الأمر. يرجى استخدام الأزرار المتاحة.")
 
@@ -147,7 +156,7 @@ def transaction_history(user_id):
     
     history = "📜 سجل العمليات:\n\n"
     for transaction in transactions:
-        date = transaction['timestamp'].strftime("%I:%M:%S %p %d/%m/%Y")
+        date = transaction['timestamp'].strftime("%H:%M:%S %d/%m/%Y")
         transaction_id = transaction['transaction_id']
         if transaction['type'] == 'transfer_out':
             history += f"🔸 {date}: تحويل ${transaction['amount']:.2f} إلى {transaction['details']['recipient_id']}\n   🆔 رقم العملية: `{transaction_id}`\n\n"
@@ -167,7 +176,10 @@ def bot_liquidity(user_id):
         f"💰 إجمالي أرصدة المستخدمين: ${total_user_balance:.2f}\n"
     )
     
-    send_message_safely(user_id, response)
+    keyboard = InlineKeyboardMarkup()
+    keyboard.row(InlineKeyboardButton("📊 الحالة", callback_data="check_status"))
+    
+    send_message_safely(user_id, response, reply_markup=keyboard)
 
 def transfer_start(user_id):
     send_message_safely(user_id, "🔢 أدخل رقم حساب المستلم (معرف المستخدم):")
@@ -296,6 +308,11 @@ def daily_gift(user_id):
     )
     send_message_safely(user_id, response, parse_mode='Markdown')
 
+@bot.callback_query_handler(func=lambda call: call.data == "check_status")
+def status_callback(call):
+    check_status(call.from_user.id)
+    bot.answer_callback_query(call.id)
+
 def check_status(user_id):
     # Check Telegram API latency
     telegram_start_time = time.time()
@@ -311,7 +328,8 @@ def check_status(user_id):
         f"📊 حالة النظام:\n\n"
         f"🚀 تأخير Telegram API: {telegram_latency:.2f} مللي ثانية\n"
         f"🗄️ تأخير قاعدة البيانات: {mongo_latency:.2f} مللي ثانية\n"
-        f"⏰ الوقت الحالي (بغداد): {get_current_time().strftime('%Y-%m-%d %H:%M:%S')}"
+        f"⏰ الوقت الحالي (بغداد): {get_current_time().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"⌛ وقت التشغيل: {get_uptime()}"
     )
 
     send_message_safely(user_id, status_message)
