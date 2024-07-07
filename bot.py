@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 import pytz
 import string
 import requests
-import os
 
 # Bot token
 TOKEN = os.getenv("TOKEN")
@@ -115,7 +114,7 @@ def get_main_keyboard():
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row(KeyboardButton('💰 رصيدي'), KeyboardButton('📜 العمليات السابقة'))
     keyboard.row(KeyboardButton('🏦 سيولة البوت'), KeyboardButton('💸 تحويل'))
-    keyboard.row(KeyboardButton('🎁 الهدية اليومية'))
+    keyboard.row(KeyboardButton('🎮 أخرى'))
     return keyboard
 
 # Start command
@@ -138,8 +137,8 @@ def handle_all_messages(message):
         bot_liquidity(user_id)
     elif text == '💸 تحويل':
         transfer_start(user_id)
-    elif text == '🎁 الهدية اليومية':
-        daily_gift(user_id)
+    elif text == '🎮 أخرى':
+        show_other_options(user_id)
     else:
         send_message_safely(user_id, "عذرًا، لم أفهم هذا الأمر. يرجى استخدام الأزرار المتاحة.")
 
@@ -164,6 +163,9 @@ def transaction_history(user_id):
             history += f"🔹 {date}: استلام ${transaction['amount']:.2f} من {transaction['details']['sender_id']}\n   🆔 رقم العملية: `{transaction_id}`\n\n"
         elif transaction['type'] == 'daily_gift':
             history += f"🎁 {date}: هدية يومية ${transaction['amount']:.2f}\n   🆔 رقم العملية: `{transaction_id}`\n\n"
+        elif transaction['type'] in ['slots_win', 'slots_loss']:
+            action = "ربح" if transaction['type'] == 'slots_win' else "خسارة"
+            history += f"🎰 {date}: {action} في Slots ${abs(transaction['amount']):.2f}\n   🆔 رقم العملية: `{transaction_id}`\n\n"
     
     send_message_safely(user_id, history, parse_mode='Markdown')
 
@@ -278,6 +280,21 @@ def perform_transfer(transfer_request):
 
     transfer_requests_collection.delete_one({'transfer_id': transfer_id})
 
+def show_other_options(user_id):
+    keyboard = InlineKeyboardMarkup()
+    keyboard.row(InlineKeyboardButton("🎁 الهدية اليومية", callback_data="daily_gift"),
+                 InlineKeyboardButton("🎰 لعبة Slots", callback_data="play_slots"))
+    send_message_safely(user_id, "اختر إحدى الخيارات التالية:", reply_markup=keyboard)
+
+@bot.callback_query_handler(func=lambda call: call.data in ["daily_gift", "play_slots"])
+def other_options_callback(call):
+    user_id = call.from_user.id
+    if call.data == "daily_gift":
+        daily_gift(user_id)
+    elif call.data == "play_slots":
+        start_slots_game(user_id)
+    bot.answer_callback_query(call.id)
+
 def daily_gift(user_id):
     user = users_collection.find_one({'user_id': user_id})
     
@@ -307,6 +324,69 @@ def daily_gift(user_id):
         f"🆔 رقم العملية: `{transaction_id}`"
     )
     send_message_safely(user_id, response, parse_mode='Markdown')
+
+def start_slots_game(user_id):
+    send_message_safely(user_id, "أدخل مبلغ الرهان (من 5$ إلى 100$):")
+    bot.register_next_step_handler_by_chat_id(user_id, process_slots_bet)
+
+def process_slots_bet(message):
+    user_id = message.from_user.id
+    try:
+        bet_amount = float(message.text)
+        if 5 <= bet_amount <= 100:
+            play_slots(user_id, bet_amount)
+        else:
+            send_message_safely(user_id, "المبلغ يجب أن يكون بين 5$ و 100$. حاول مرة أخرى.")
+            start_slots_game(user_id)
+    except ValueError:
+        send_message_safely(user_id, "الرجاء إدخال رقم صحيح. حاول مرة أخرى.")
+        start_slots_game(user_id)
+
+def play_slots(user_id, bet_amount):
+    user_balance = get_user_balance(user_id)
+    if bet_amount > user_balance:
+        send_message_safely(user_id, "رصيدك غير كافٍ للعب بهذا المبلغ.")
+        return
+
+    # 25% فرصة للفوز
+    if random.random() < 0.25:
+        winnings = bet_amount * 2
+        new_balance = user_balance + winnings - bet_amount
+        update_user_balance(user_id, new_balance)
+        transaction_id = log_transaction(user_id, 'slots_win', winnings - bet_amount)
+        message = (
+            f"🎰 مبروك! لقد ربحت في لعبة Slots!\n"
+            f"💰 المبلغ: ${winnings:.2f}\n"
+            f"💳 رصيدك الجديد: ${new_balance:.2f}\n"
+            f"🆔 رقم العملية: `{transaction_id}`"
+        )
+    else:
+        new_balance = user_balance - bet_amount
+        update_user_balance(user_id, new_balance)
+        transaction_id = log_transaction(user_id, 'slots_loss', -bet_amount)
+        message = (
+            f"🎰 للأسف، لم تربح هذه المرة في لعبة Slots.\n"
+            f"💸 خسرت: ${bet_amount:.2f}\n"
+            f"💳 رصيدك الجديد: ${new_balance:.2f}\n"
+            f"🆔 رقم العملية: `{transaction_id}`"
+        )
+
+    send_message_safely(user_id, message, parse_mode='Markdown')
+    
+    # اسأل المستخدم إذا كان يريد اللعب مرة أخرى
+    keyboard = InlineKeyboardMarkup()
+    keyboard.row(InlineKeyboardButton("نعم", callback_data="play_slots_again"),
+                 InlineKeyboardButton("لا", callback_data="end_slots"))
+    send_message_safely(user_id, "هل تريد اللعب مرة أخرى؟", reply_markup=keyboard)
+
+@bot.callback_query_handler(func=lambda call: call.data in ["play_slots_again", "end_slots"])
+def slots_callback(call):
+    user_id = call.from_user.id
+    if call.data == "play_slots_again":
+        start_slots_game(user_id)
+    else:
+        send_message_safely(user_id, "شكرًا للعب! يمكنك العودة إلى القائمة الرئيسية.", reply_markup=get_main_keyboard())
+    bot.answer_callback_query(call.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_status")
 def status_callback(call):
