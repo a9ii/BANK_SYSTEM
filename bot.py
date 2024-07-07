@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 import pytz
 import string
 import requests
+import os
+
 
 # Bot token
 TOKEN = os.getenv("TOKEN")
