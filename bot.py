@@ -6,6 +6,7 @@ from pymongo import MongoClient
 from datetime import datetime, timedelta
 import pytz
 import uuid
+import os
 
 # Bot token
 TOKEN = os.getenv("TOKEN")
