@@ -1,18 +1,13 @@
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from telebot import apihelper
 import random
 import time
 from pymongo import MongoClient
 from datetime import datetime
 import pytz
 import string
+import requests
 import os
-
-apihelper.ENABLE_MIDDLEWARE = True
-
-
-
 # Bot token
 TOKEN = os.getenv("TOKEN")
 
@@ -98,20 +93,19 @@ def get_total_user_balance():
     total = sum(user['balance'] for user in users_collection.find())
     return total
 
+def send_message_safely(chat_id, text, **kwargs):
+    try:
+        return bot.send_message(chat_id, text, **kwargs)
+    except Exception as e:
+        print(f"Error sending message to {chat_id}: {e}")
+
 # Keyboard markup
 def get_main_keyboard():
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row(KeyboardButton('💰 رصيدي'), KeyboardButton('📜 العمليات السابقة'))
     keyboard.row(KeyboardButton('🏦 سيولة البوت'), KeyboardButton('💸 تحويل'))
-    keyboard.row(KeyboardButton('🎁 الهدية اليومية'))
+    keyboard.row(KeyboardButton('🎁 الهدية اليومية'), KeyboardButton('📊 الحالة'))
     return keyboard
-
-# Error handling wrapper
-def send_message_safely(chat_id, text, **kwargs):
-    try:
-        return bot.send_message(chat_id, text, **kwargs)
-    except telebot.apihelper.ApiException as e:
-        print(f"Error sending message to {chat_id}: {e}")
 
 # Start command
 @bot.message_handler(commands=['start'])
@@ -119,18 +113,33 @@ def start(message):
     user_id = message.from_user.id
     send_message_safely(user_id, "👋 مرحبًا بك في البوت البنكي! يمكنك استخدام الأزرار أدناه للتحكم.", reply_markup=get_main_keyboard())
 
-# Balance command
-@bot.message_handler(func=lambda message: message.text == '💰 رصيدي')
-def check_balance(message):
+# Handle all text messages
+@bot.message_handler(func=lambda message: True)
+def handle_all_messages(message):
     user_id = message.from_user.id
+    text = message.text
+
+    if text == '💰 رصيدي':
+        check_balance(user_id)
+    elif text == '📜 العمليات السابقة':
+        transaction_history(user_id)
+    elif text == '🏦 سيولة البوت':
+        bot_liquidity(user_id)
+    elif text == '💸 تحويل':
+        transfer_start(user_id)
+    elif text == '🎁 الهدية اليومية':
+        daily_gift(user_id)
+    elif text == '📊 الحالة':
+        check_status(user_id)
+    else:
+        send_message_safely(user_id, "عذرًا، لم أفهم هذا الأمر. يرجى استخدام الأزرار المتاحة.")
+
+def check_balance(user_id):
     balance = get_user_balance(user_id)
     response = f"💰 رصيدك الحالي: ${balance:.2f}\n\n🆔 رقم حسابك (معرف المستخدم): `{user_id}`"
     send_message_safely(user_id, response, parse_mode='Markdown')
 
-# Transaction history command
-@bot.message_handler(func=lambda message: message.text == '📜 العمليات السابقة')
-def transaction_history(message):
-    user_id = message.from_user.id
+def transaction_history(user_id):
     transactions = get_transaction_history(user_id)
     if not transactions:
         send_message_safely(user_id, "📭 لا توجد عمليات سابقة.")
@@ -149,10 +158,7 @@ def transaction_history(message):
     
     send_message_safely(user_id, history, parse_mode='Markdown')
 
-# Bot liquidity command
-@bot.message_handler(func=lambda message: message.text == '🏦 سيولة البوت')
-def bot_liquidity(message):
-    user_id = message.from_user.id
+def bot_liquidity(user_id):
     liquidity = get_bot_liquidity()
     total_user_balance = get_total_user_balance()
     
@@ -163,12 +169,9 @@ def bot_liquidity(message):
     
     send_message_safely(user_id, response)
 
-# Transfer command
-@bot.message_handler(func=lambda message: message.text == '💸 تحويل')
-def transfer_start(message):
-    user_id = message.from_user.id
+def transfer_start(user_id):
     send_message_safely(user_id, "🔢 أدخل رقم حساب المستلم (معرف المستخدم):")
-    bot.register_next_step_handler(message, transfer_amount)
+    bot.register_next_step_handler_by_chat_id(user_id, transfer_amount)
 
 def transfer_amount(message):
     user_id = message.from_user.id
@@ -181,7 +184,7 @@ def transfer_amount(message):
         send_message_safely(user_id, "❌ لا يمكنك التحويل لنفسك. يرجى إدخال رقم حساب آخر.")
         return
     send_message_safely(user_id, "💲 أدخل المبلغ المراد تحويله:")
-    bot.register_next_step_handler(message, transfer_confirm, recipient_id)
+    bot.register_next_step_handler_by_chat_id(user_id, transfer_confirm, recipient_id)
 
 def transfer_confirm(message, recipient_id):
     user_id = message.from_user.id
@@ -263,10 +266,7 @@ def perform_transfer(transfer_request):
 
     transfer_requests_collection.delete_one({'transfer_id': transfer_id})
 
-# Daily gift command
-@bot.message_handler(func=lambda message: message.text == '🎁 الهدية اليومية')
-def daily_gift(message):
-    user_id = message.from_user.id
+def daily_gift(user_id):
     user = users_collection.find_one({'user_id': user_id})
     
     current_time = get_current_time()
@@ -296,16 +296,25 @@ def daily_gift(message):
     )
     send_message_safely(user_id, response, parse_mode='Markdown')
 
-# Error handling
-@bot.middleware_handler(update_types=['message'])
-def handle_message(bot_instance, message):
-    try:
-        bot_instance.process_new_messages([message])
-    except Exception as e:
-        user_id = message.from_user.id
-        error_message = f"حدث خطأ أثناء معالجة طلبك. الرجاء المحاولة مرة أخرى لاحقًا."
-        send_message_safely(user_id, error_message)
-        print(f"Error processing message: {e}")
+def check_status(user_id):
+    # Check Telegram API latency
+    telegram_start_time = time.time()
+    requests.get(f"https://api.telegram.org/bot{TOKEN}/getMe")
+    telegram_latency = (time.time() - telegram_start_time) * 1000
+
+    # Check MongoDB latency
+    mongo_start_time = time.time()
+    client.admin.command('ping')
+    mongo_latency = (time.time() - mongo_start_time) * 1000
+
+    status_message = (
+        f"📊 حالة النظام:\n\n"
+        f"🚀 تأخير Telegram API: {telegram_latency:.2f} مللي ثانية\n"
+        f"🗄️ تأخير قاعدة البيانات: {mongo_latency:.2f} مللي ثانية\n"
+        f"⏰ الوقت الحالي (بغداد): {get_current_time().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
+    send_message_safely(user_id, status_message)
 
 # Main function to run the bot
 def main():
