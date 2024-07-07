@@ -1,5 +1,6 @@
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from telebot import apihelper
 import random
 import time
 from pymongo import MongoClient
@@ -8,8 +9,9 @@ import pytz
 import string
 import os
 
+apihelper.ENABLE_MIDDLEWARE = True
 
-from telebot import apihelper apihelper.ENABLE_MIDDLEWARE = True
+
 
 # Bot token
 TOKEN = os.getenv("TOKEN")
