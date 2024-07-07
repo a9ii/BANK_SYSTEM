@@ -282,9 +282,6 @@ def daily_gift(message):
     )
     
     transaction_id = log_transaction(user_id, 'daily_gift', gift_amount)
-    
- 
-        
         response = (
         f"🎉 مبروك! لقد حصلت على هدية يومية بقيمة ${gift_amount:.3f}\n"
         f"💰 رصيدك الجديد: ${new_balance:.2f}\n"
