@@ -77,8 +77,8 @@ def log_transaction(user_id, transaction_type, amount, details=None, transaction
     transactions_collection.insert_one(transaction)
     return transaction_id
 
-def get_transaction_history(user_id):
-    transactions = transactions_collection.find({'user_id': user_id})
+def get_transaction_history(user_id, limit=10):
+    transactions = transactions_collection.find({'user_id': user_id}).sort('timestamp', -1).limit(limit)
     return list(transactions)
 
 def update_bot_liquidity(amount):
@@ -162,12 +162,12 @@ def check_balance(user_id):
     send_message_safely(user_id, response, parse_mode='Markdown')
 
 def transaction_history(user_id):
-    transactions = get_transaction_history(user_id)
+    transactions = get_transaction_history(user_id, 10)
     if not transactions:
         send_message_safely(user_id, "📭 لا توجد عمليات سابقة.")
         return
     
-    history = "📜 سجل العمليات:\n\n"
+    history = "📜 آخر 10 عمليات:\n\n"
     for transaction in transactions:
         date = transaction['timestamp'].strftime("%H:%M:%S %d/%m/%Y")
         transaction_id = transaction['transaction_id']
@@ -215,15 +215,21 @@ def transfer_amount(message):
     if recipient_id == user_id:
         send_message_safely(user_id, "❌ لا يمكنك التحويل لنفسك. يرجى إدخال رقم حساب آخر.")
         return
-    send_message_safely(user_id, "💲 أدخل المبلغ المراد تحويله:")
+    send_message_safely(user_id, "💲 أدخل المبلغ المراد تحويله (الحد الأدنى 0.01$):")
     bot.register_next_step_handler_by_chat_id(user_id, transfer_confirm, recipient_id)
 
 def transfer_confirm(message, recipient_id):
     user_id = message.from_user.id
     try:
         amount = float(message.text)
+        if amount <= 0:
+            raise ValueError
     except ValueError:
-        send_message_safely(user_id, "❌ مبلغ غير صحيح. يرجى إدخال رقم.")
+        send_message_safely(user_id, "❌ مبلغ غير صحيح. يرجى إدخال رقم أكبر من 0.01$.")
+        return
+    
+    if amount < 0.01:
+        send_message_safely(user_id, "❌ الحد الأدنى للتحويل هو 0.01$.")
         return
     
     fee = amount * 0.02
@@ -429,13 +435,28 @@ def slots_callback(call):
 
 def show_loan_options(user_id):
     keyboard = InlineKeyboardMarkup()
+    keyboard.row(InlineKeyboardButton("طلب قرض", callback_data="request_loan"),
+                 InlineKeyboardButton("سداد قرض", callback_data="repay_loan"))
+    send_message_safely(user_id, "اختر أحد الخيارات:", reply_markup=keyboard)
+
+@bot.callback_query_handler(func=lambda call: call.data in ["request_loan", "repay_loan"])
+def loan_options_callback(call):
+    user_id = call.from_user.id
+    if call.data == "request_loan":
+        show_loan_amounts(user_id)
+    elif call.data == "repay_loan":
+        show_active_loans(user_id)
+    bot.answer_callback_query(call.id)
+
+def show_loan_amounts(user_id):
+    keyboard = InlineKeyboardMarkup()
     keyboard.row(InlineKeyboardButton("$5", callback_data="loan_5"),
                  InlineKeyboardButton("$25", callback_data="loan_25"),
                  InlineKeyboardButton("$100", callback_data="loan_100"))
     send_message_safely(user_id, "اختر مبلغ القرض:", reply_markup=keyboard)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("loan_"))
-def loan_callback(call):
+def loan_amount_callback(call):
     user_id = call.from_user.id
     loan_amount = int(call.data.split("_")[1])
     process_loan_request(user_id, loan_amount)
@@ -443,46 +464,56 @@ def loan_callback(call):
 
 def process_loan_request(user_id, loan_amount):
     user_balance = get_user_balance(user_id)
-    if user_balance >= loan_amount * 0.9:
-        interest = loan_amount * 0.25
-        total_to_repay = loan_amount + interest
-        
-        update_user_balance(user_id, user_balance + loan_amount)
-        log_transaction(user_id, 'loan', loan_amount)
-        
-        loan_id = generate_transaction_id(user_id)
-        loans_collection.insert_one({
-            'loan_id': loan_id,
-            'user_id': user_id,
-            'amount': loan_amount,
-            'interest': interest,
-            'total_to_repay': total_to_repay,
-            'paid': False,
-            'timestamp': get_current_time()
-        })
-        
-        message = (
-            f"✅ تمت الموافقة على القرض الخاص بك!\n"
-            f"💰 مبلغ القرض: ${loan_amount:.2f}\n"
-            f"💸 الفائدة: ${interest:.2f}\n"
-            f"🔄 المبلغ الإجمالي للسداد: ${total_to_repay:.2f}\n"
-            f"🆔 رقم القرض: `{loan_id}`"
-        )
-        send_message_safely(user_id, message, parse_mode='Markdown')
-    else:
-        send_message_safely(user_id, "عذرًا، رصيدك غير كافٍ للحصول على هذا القرض. يجب أن يكون لديك 90% على الأقل من مبلغ القرض.")
+    bot_liquidity = get_bot_liquidity()
+    existing_loan = loans_collection.find_one({'user_id': user_id, 'paid': False})
 
-def get_user_loans(user_id):
-    return list(loans_collection.find({'user_id': user_id, 'paid': False}))
-
-@bot.message_handler(func=lambda message: message.text == 'قروضي')
-def my_loans(message):
-    user_id = message.from_user.id
-    loans = get_user_loans(user_id)
-    if not loans:
-        send_message_safely(user_id, "ليس لديك قروض حالية.")
+    if existing_loan:
+        send_message_safely(user_id, "عذرًا، لديك قرض قائم بالفعل. يجب سداده قبل طلب قرض جديد.")
         return
+
+    if user_balance < loan_amount * 0.9:
+        send_message_safely(user_id, "عذرًا، رصيدك غير كافٍ للحصول على هذا القرض. يجب أن يكون لديك 90% على الأقل من مبلغ القرض.")
+        return
+
+    if loan_amount > bot_liquidity:
+        send_message_safely(user_id, "عذرًا، لا تتوفر سيولة كافية في البوت حاليًا لمنح هذا القرض.")
+        return
+
+    interest = loan_amount * 0.25
+    total_to_repay = loan_amount + interest
     
+    update_user_balance(user_id, user_balance + loan_amount)
+    update_bot_liquidity(-loan_amount)
+    
+    loan_id = generate_transaction_id(user_id)
+    loans_collection.insert_one({
+        'loan_id': loan_id,
+        'user_id': user_id,
+        'amount': loan_amount,
+        'interest': interest,
+        'total_to_repay': total_to_repay,
+        'paid': False,
+        'timestamp': get_current_time()
+    })
+    
+    transaction_id = log_transaction(user_id, 'loan', loan_amount)
+    
+    message = (
+        f"✅ تمت الموافقة على القرض الخاص بك!\n"
+        f"💰 مبلغ القرض: ${loan_amount:.2f}\n"
+        f"💸 الفائدة: ${interest:.2f}\n"
+        f"🔄 المبلغ الإجمالي للسداد: ${total_to_repay:.2f}\n"
+        f"🆔 رقم القرض: `{loan_id}`\n"
+        f"🆔 رقم العملية: `{transaction_id}`"
+    )
+    send_message_safely(user_id, message, parse_mode='Markdown')
+
+def show_active_loans(user_id):
+    loans = loans_collection.find({'user_id': user_id, 'paid': False})
+    if not loans:
+        send_message_safely(user_id, "ليس لديك قروض نشطة حاليًا.")
+        return
+
     for loan in loans:
         message = (
             f"🆔 رقم القرض: `{loan['loan_id']}`\n"
@@ -514,15 +545,18 @@ def repay_loan(user_id, loan_id):
         return
     
     update_user_balance(user_id, user_balance - loan['total_to_repay'])
+    update_bot_liquidity(loan['total_to_repay'])
     loans_collection.update_one({'loan_id': loan_id}, {'$set': {'paid': True}})
-    log_transaction(user_id, 'loan_repayment', -loan['total_to_repay'])
+    
+    transaction_id = log_transaction(user_id, 'loan_repayment', -loan['total_to_repay'])
     
     message = (
         f"✅ تم سداد القرض بنجاح!\n"
         f"💰 المبلغ المسدد: ${loan['total_to_repay']:.2f}\n"
-        f"💳 رصيدك الجديد: ${(user_balance - loan['total_to_repay']):.2f}"
+        f"💳 رصيدك الجديد: ${(user_balance - loan['total_to_repay']):.2f}\n"
+        f"🆔 رقم العملية: `{transaction_id}`"
     )
-    send_message_safely(user_id, message)
+    send_message_safely(user_id, message, parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_status")
 def status_callback(call):
