@@ -110,6 +110,9 @@ def get_total_user_balance():
     total = sum(user['balance'] for user in users_collection.find())
     return total
 
+def get_user_loans(user_id):
+    return list(loans_collection.find({'user_id': user_id, 'paid': False}))
+
 def send_message_safely(chat_id, text, **kwargs):
     try:
         return bot.send_message(chat_id, text, **kwargs)
@@ -152,7 +155,7 @@ def handle_all_messages(message):
 def check_balance(user_id):
     balance = get_user_balance(user_id)
     loans = get_user_loans(user_id)
-    total_loan = sum(loan['amount'] + loan['interest'] for loan in loans if not loan['paid'])
+    total_loan = sum(loan['total_to_repay'] for loan in loans)
     
     response = f"💰 رصيدك الحالي: ${balance:.2f}\n"
     if total_loan > 0:
@@ -465,9 +468,9 @@ def loan_amount_callback(call):
 def process_loan_request(user_id, loan_amount):
     user_balance = get_user_balance(user_id)
     bot_liquidity = get_bot_liquidity()
-    existing_loan = loans_collection.find_one({'user_id': user_id, 'paid': False})
+    existing_loans = get_user_loans(user_id)
 
-    if existing_loan:
+    if existing_loans:
         send_message_safely(user_id, "عذرًا، لديك قرض قائم بالفعل. يجب سداده قبل طلب قرض جديد.")
         return
 
@@ -509,7 +512,7 @@ def process_loan_request(user_id, loan_amount):
     send_message_safely(user_id, message, parse_mode='Markdown')
 
 def show_active_loans(user_id):
-    loans = loans_collection.find({'user_id': user_id, 'paid': False})
+    loans = get_user_loans(user_id)
     if not loans:
         send_message_safely(user_id, "ليس لديك قروض نشطة حاليًا.")
         return
