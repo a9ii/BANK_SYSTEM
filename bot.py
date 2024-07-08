@@ -9,7 +9,6 @@ import string
 import requests
 import os
 
-
 # Bot token
 TOKEN = os.getenv("TOKEN")
 
@@ -24,6 +23,7 @@ users_collection = db['users']
 transactions_collection = db['transactions']
 bot_stats_collection = db['bot_stats']
 transfer_requests_collection = db['transfer_requests']
+loans_collection = db['loans']
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -96,10 +96,15 @@ def update_bot_liquidity(amount):
         },
         upsert=True
     )
+    log_transaction(None, 'bot_liquidity_change', amount, {'type': 'system'})
 
 def get_bot_liquidity():
     stats = bot_stats_collection.find_one({'_id': 'liquidity'})
-    return stats['amount'] if stats else 0
+    if not stats:
+        initial_liquidity = 100
+        bot_stats_collection.insert_one({'_id': 'liquidity', 'amount': initial_liquidity})
+        return initial_liquidity
+    return stats['amount']
 
 def get_total_user_balance():
     total = sum(user['balance'] for user in users_collection.find())
@@ -146,7 +151,14 @@ def handle_all_messages(message):
 
 def check_balance(user_id):
     balance = get_user_balance(user_id)
-    response = f"💰 رصيدك الحالي: ${balance:.2f}\n\n🆔 رقم حسابك (معرف المستخدم): `{user_id}`"
+    loans = get_user_loans(user_id)
+    total_loan = sum(loan['amount'] + loan['interest'] for loan in loans if not loan['paid'])
+    
+    response = f"💰 رصيدك الحالي: ${balance:.2f}\n"
+    if total_loan > 0:
+        response += f"💸 إجمالي القروض المستحقة: ${total_loan:.2f}\n"
+    response += f"🆔 رقم حسابك (معرف المستخدم): `{user_id}`"
+    
     send_message_safely(user_id, response, parse_mode='Markdown')
 
 def transaction_history(user_id):
@@ -168,6 +180,10 @@ def transaction_history(user_id):
         elif transaction['type'] in ['slots_win', 'slots_loss']:
             action = "ربح" if transaction['type'] == 'slots_win' else "خسارة"
             history += f"🎰 {date}: {action} في Slots ${abs(transaction['amount']):.2f}\n   🆔 رقم العملية: `{transaction_id}`\n\n"
+        elif transaction['type'] == 'loan':
+            history += f"💸 {date}: قرض ${transaction['amount']:.2f}\n   🆔 رقم العملية: `{transaction_id}`\n\n"
+        elif transaction['type'] == 'loan_repayment':
+            history += f"💰 {date}: سداد قرض ${transaction['amount']:.2f}\n   🆔 رقم العملية: `{transaction_id}`\n\n"
     
     send_message_safely(user_id, history, parse_mode='Markdown')
 
@@ -286,15 +302,18 @@ def show_other_options(user_id):
     keyboard = InlineKeyboardMarkup()
     keyboard.row(InlineKeyboardButton("🎁 الهدية اليومية", callback_data="daily_gift"),
                  InlineKeyboardButton("🎰 لعبة Slots", callback_data="play_slots"))
+    keyboard.row(InlineKeyboardButton("💸 القرض", callback_data="loan_options"))
     send_message_safely(user_id, "اختر إحدى الخيارات التالية:", reply_markup=keyboard)
 
-@bot.callback_query_handler(func=lambda call: call.data in ["daily_gift", "play_slots"])
+@bot.callback_query_handler(func=lambda call: call.data in ["daily_gift", "play_slots", "loan_options"])
 def other_options_callback(call):
     user_id = call.from_user.id
     if call.data == "daily_gift":
         daily_gift(user_id)
     elif call.data == "play_slots":
         start_slots_game(user_id)
+    elif call.data == "loan_options":
+        show_loan_options(user_id)
     bot.answer_callback_query(call.id)
 
 def daily_gift(user_id):
@@ -346,36 +365,54 @@ def process_slots_bet(message):
 
 def play_slots(user_id, bet_amount):
     user_balance = get_user_balance(user_id)
+    bot_liquidity = get_bot_liquidity()
+
     if bet_amount > user_balance:
         send_message_safely(user_id, "رصيدك غير كافٍ للعب بهذا المبلغ.")
         return
 
-    # 25% فرصة للفوز
-    if random.random() < 0.25:
+    symbols = ['🍒', '🍋', '🍊', '🍉', '🍇', '💎']
+    result = [random.choice(symbols) for _ in range(3)]
+
+    is_winner = len(set(result)) == 1  # All symbols are the same
+
+    if is_winner and bet_amount * 2 > bot_liquidity:
+        is_winner = False  # Force a loss if bot doesn't have enough liquidity
+
+    if is_winner:
         winnings = bet_amount * 2
-        new_balance = user_balance + winnings - bet_amount
-        update_user_balance(user_id, new_balance)
+        new_user_balance = user_balance + winnings - bet_amount
+        new_bot_liquidity = bot_liquidity - winnings + bet_amount
+
+        update_user_balance(user_id, new_user_balance)
+        update_bot_liquidity(-winnings + bet_amount)
+
         transaction_id = log_transaction(user_id, 'slots_win', winnings - bet_amount)
         message = (
-            f"🎰 مبروك! لقد ربحت في لعبة Slots!\n"
+            f"🎰 نتيجة اللعبة: {''.join(result)}\n"
+            f"🎉 مبروك! لقد ربحت في لعبة Slots!\n"
             f"💰 المبلغ: ${winnings:.2f}\n"
-            f"💳 رصيدك الجديد: ${new_balance:.2f}\n"
+            f"💳 رصيدك الجديد: ${new_user_balance:.2f}\n"
             f"🆔 رقم العملية: `{transaction_id}`"
         )
     else:
-        new_balance = user_balance - bet_amount
-        update_user_balance(user_id, new_balance)
+        new_user_balance = user_balance - bet_amount
+        new_bot_liquidity = bot_liquidity + bet_amount
+
+        update_user_balance(user_id, new_user_balance)
+        update_bot_liquidity(bet_amount)
+
         transaction_id = log_transaction(user_id, 'slots_loss', -bet_amount)
         message = (
-            f"🎰 للأسف، لم تربح هذه المرة في لعبة Slots.\n"
+            f"🎰 نتيجة اللعبة: {''.join(result)}\n"
+            f"😢 للأسف، لم تربح هذه المرة في لعبة Slots.\n"
             f"💸 خسرت: ${bet_amount:.2f}\n"
-            f"💳 رصيدك الجديد: ${new_balance:.2f}\n"
+            f"💳 رصيدك الجديد: ${new_user_balance:.2f}\n"
             f"🆔 رقم العملية: `{transaction_id}`"
         )
 
     send_message_safely(user_id, message, parse_mode='Markdown')
     
-    # اسأل المستخدم إذا كان يريد اللعب مرة أخرى
     keyboard = InlineKeyboardMarkup()
     keyboard.row(InlineKeyboardButton("نعم", callback_data="play_slots_again"),
                  InlineKeyboardButton("لا", callback_data="end_slots"))
@@ -390,18 +427,113 @@ def slots_callback(call):
         send_message_safely(user_id, "شكرًا للعب! يمكنك العودة إلى القائمة الرئيسية.", reply_markup=get_main_keyboard())
     bot.answer_callback_query(call.id)
 
+def show_loan_options(user_id):
+    keyboard = InlineKeyboardMarkup()
+    keyboard.row(InlineKeyboardButton("$5", callback_data="loan_5"),
+                 InlineKeyboardButton("$25", callback_data="loan_25"),
+                 InlineKeyboardButton("$100", callback_data="loan_100"))
+    send_message_safely(user_id, "اختر مبلغ القرض:", reply_markup=keyboard)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("loan_"))
+def loan_callback(call):
+    user_id = call.from_user.id
+    loan_amount = int(call.data.split("_")[1])
+    process_loan_request(user_id, loan_amount)
+    bot.answer_callback_query(call.id)
+
+def process_loan_request(user_id, loan_amount):
+    user_balance = get_user_balance(user_id)
+    if user_balance >= loan_amount * 0.9:
+        interest = loan_amount * 0.25
+        total_to_repay = loan_amount + interest
+        
+        update_user_balance(user_id, user_balance + loan_amount)
+        log_transaction(user_id, 'loan', loan_amount)
+        
+        loan_id = generate_transaction_id(user_id)
+        loans_collection.insert_one({
+            'loan_id': loan_id,
+            'user_id': user_id,
+            'amount': loan_amount,
+            'interest': interest,
+            'total_to_repay': total_to_repay,
+            'paid': False,
+            'timestamp': get_current_time()
+        })
+        
+        message = (
+            f"✅ تمت الموافقة على القرض الخاص بك!\n"
+            f"💰 مبلغ القرض: ${loan_amount:.2f}\n"
+            f"💸 الفائدة: ${interest:.2f}\n"
+            f"🔄 المبلغ الإجمالي للسداد: ${total_to_repay:.2f}\n"
+            f"🆔 رقم القرض: `{loan_id}`"
+        )
+        send_message_safely(user_id, message, parse_mode='Markdown')
+    else:
+        send_message_safely(user_id, "عذرًا، رصيدك غير كافٍ للحصول على هذا القرض. يجب أن يكون لديك 90% على الأقل من مبلغ القرض.")
+
+def get_user_loans(user_id):
+    return list(loans_collection.find({'user_id': user_id, 'paid': False}))
+
+@bot.message_handler(func=lambda message: message.text == 'قروضي')
+def my_loans(message):
+    user_id = message.from_user.id
+    loans = get_user_loans(user_id)
+    if not loans:
+        send_message_safely(user_id, "ليس لديك قروض حالية.")
+        return
+    
+    for loan in loans:
+        message = (
+            f"🆔 رقم القرض: `{loan['loan_id']}`\n"
+            f"💰 مبلغ القرض: ${loan['amount']:.2f}\n"
+            f"💸 الفائدة: ${loan['interest']:.2f}\n"
+            f"🔄 المبلغ الإجمالي للسداد: ${loan['total_to_repay']:.2f}\n"
+            f"📅 تاريخ القرض: {loan['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        keyboard = InlineKeyboardMarkup()
+        keyboard.row(InlineKeyboardButton("سداد القرض", callback_data=f"repay_loan_{loan['loan_id']}"))
+        send_message_safely(user_id, message, reply_markup=keyboard, parse_mode='Markdown')
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("repay_loan_"))
+def repay_loan_callback(call):
+    user_id = call.from_user.id
+    loan_id = call.data.split("_")[2]
+    repay_loan(user_id, loan_id)
+    bot.answer_callback_query(call.id)
+
+def repay_loan(user_id, loan_id):
+    loan = loans_collection.find_one({'loan_id': loan_id, 'user_id': user_id, 'paid': False})
+    if not loan:
+        send_message_safely(user_id, "عذرًا، لم يتم العثور على القرض المحدد.")
+        return
+    
+    user_balance = get_user_balance(user_id)
+    if user_balance < loan['total_to_repay']:
+        send_message_safely(user_id, "عذرًا، رصيدك غير كافٍ لسداد هذا القرض.")
+        return
+    
+    update_user_balance(user_id, user_balance - loan['total_to_repay'])
+    loans_collection.update_one({'loan_id': loan_id}, {'$set': {'paid': True}})
+    log_transaction(user_id, 'loan_repayment', -loan['total_to_repay'])
+    
+    message = (
+        f"✅ تم سداد القرض بنجاح!\n"
+        f"💰 المبلغ المسدد: ${loan['total_to_repay']:.2f}\n"
+        f"💳 رصيدك الجديد: ${(user_balance - loan['total_to_repay']):.2f}"
+    )
+    send_message_safely(user_id, message)
+
 @bot.callback_query_handler(func=lambda call: call.data == "check_status")
 def status_callback(call):
     check_status(call.from_user.id)
     bot.answer_callback_query(call.id)
 
 def check_status(user_id):
-    # Check Telegram API latency
     telegram_start_time = time.time()
     requests.get(f"https://api.telegram.org/bot{TOKEN}/getMe")
     telegram_latency = (time.time() - telegram_start_time) * 1000
 
-    # Check MongoDB latency
     mongo_start_time = time.time()
     client.admin.command('ping')
     mongo_latency = (time.time() - mongo_start_time) * 1000
